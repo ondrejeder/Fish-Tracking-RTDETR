@@ -96,12 +96,12 @@ def analyze_fish(image, scale_length_cm):
 {', '.join(map(str, fish_lengths))}
 
 📊 **STATISTICS:**
-- Average Length: {round(np.mean(fish_lengths), 2)} cm
-- Minimum Length: {round(min(fish_lengths), 2)} cm
-- Maximum Length: {round(max(fish_lengths), 2)} cm
+- Average Length: {np.mean(fish_lengths):.2f} cm
+- Minimum Length: {min(fish_lengths):.2f} cm
+- Maximum Length: {max(fish_lengths):.2f} cm
 
 ✅ **Scale Detected:** Yes ({scale_length_cm} cm)
-⚙️ **Scale Factor:** {round(pixels_per_cm, 2)} pixels/cm
+⚙️ **Scale Factor:** {pixels_per_cm:.2f} pixels/cm
         """
     
     elif scale_detection is None and len(fish_detections) > 0:
