@@ -11,15 +11,6 @@ model = RTDETR('best.pt')
 def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
     """
     Run RT-DETR inference on an image and calculate fish lengths
-    
-    Args:
-        image: PIL Image or numpy array
-        scale_cm: Length of the scale object in centimeters
-        conf_threshold: Confidence threshold for detections
-        iou_threshold: IoU threshold for NMS
-    
-    Returns:
-        Annotated image and analysis results with fish lengths
     """
     if image is None:
         return None, "Please upload an image."
@@ -83,14 +74,15 @@ def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
     
     # Use the first scale detection for calibration
     scale_bbox = scale_detections[0]
-    scale_pixels = scale_bbox['height']  # Using height of scale bounding box
+    # Use the longer dimension of the scale for calibration
+    scale_pixels = max(scale_bbox['height'], scale_bbox['width'])
     pixels_per_cm = scale_pixels / scale_cm
     
-    # Calculate fish lengths
+    # Calculate fish lengths using longer side of bounding box
     fish_lengths = []
     for fish in fish_detections:
-        # Use the height of the bounding box as fish length
-        length_pixels = fish['height']
+        # Use the LONGER side of bounding box as fish length
+        length_pixels = max(fish['width'], fish['height'])
         length_cm = length_pixels / pixels_per_cm
         fish_lengths.append(length_cm)
     
@@ -124,6 +116,7 @@ def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
 - Scale length used: {scale_cm} cm
 - Scale detected: ✓ (confidence: {scale_detections[0]['confidence']:.1%})
 - Fish detected: {fish_count}
+- Measurement method: Longer bounding box side
 - Confidence threshold: {conf_threshold:.0%}
 """
     
