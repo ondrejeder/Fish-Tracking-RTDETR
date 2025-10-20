@@ -72,9 +72,15 @@ def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
     if not fish_detections:
         return plotted_img_rgb, "ℹ️ **No fish detected in the image.**"
     
-    # Use the first scale detection for calibration
-    scale_bbox = scale_detections[0]
-    # Use the longer dimension of the scale for calibration
+    # Use the LARGEST scale detection for calibration (most visible/reliable)
+    if len(scale_detections) > 1:
+        # Find the scale with largest area
+        scale_bbox = max(scale_detections, key=lambda s: s['width'] * s['height'])
+        multiple_scales_warning = f"\n⚠️ **Note:** Multiple scales detected ({len(scale_detections)}). Using largest scale for calibration."
+    else:
+        scale_bbox = scale_detections[0]
+        multiple_scales_warning = ""
+    
     scale_pixels = max(scale_bbox['height'], scale_bbox['width'])
     pixels_per_cm = scale_pixels / scale_cm
     
