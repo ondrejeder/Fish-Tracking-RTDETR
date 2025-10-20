@@ -2,23 +2,31 @@ import gradio as gr
 from ultralytics import RTDETR
 from PIL import Image
 import numpy as np
+import spaces
 
 # Load your trained RT-DETR model
-# Make sure 'best.pt' is uploaded to your HuggingFace Space
 model = RTDETR('best.pt')
 
-def predict_image(image, conf_threshold=0.25, iou_threshold=0.45):
+@spaces.GPU
+def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
     """
-    Run RT-DETR inference on an image
+    Run RT-DETR inference on an image and calculate fish lengths
     
     Args:
         image: PIL Image or numpy array
+        scale_cm: Length of the scale object in centimeters
         conf_threshold: Confidence threshold for detections
         iou_threshold: IoU threshold for NMS
     
     Returns:
-        Annotated image and detection details
+        Annotated image and analysis results with fish lengths
     """
+    if image is None:
+        return None, "Please upload an image."
+    
+    if scale_cm is None or scale_cm <= 0:
+        return None, "Please enter a valid scale length in cm."
+    
     # Run prediction
     results = model.predict(
         source=image,
@@ -34,12 +42,14 @@ def predict_image(image, conf_threshold=0.25, iou_threshold=0.45):
     # Plot results on image
     plotted_img = result.plot()
     
-    # Convert BGR to RGB (OpenCV uses BGR, Gradio expects RGB)
+    # Convert BGR to RGB
     plotted_img_rgb = plotted_img[..., ::-1]
     
     # Extract detection information
     boxes = result.boxes
-    detections_list = []
+    
+    fish_detections = []
+    scale_detections = []
     
     for box in boxes:
         class_id = int(box.cls[0])
@@ -47,30 +57,86 @@ def predict_image(image, conf_threshold=0.25, iou_threshold=0.45):
         class_name = result.names[class_id]
         bbox = box.xyxy[0].tolist()  # [x1, y1, x2, y2]
         
-        detections_list.append({
+        # Calculate bounding box dimensions
+        width = bbox[2] - bbox[0]
+        height = bbox[3] - bbox[1]
+        
+        detection = {
             'class': class_name,
             'confidence': confidence,
-            'bbox': bbox
-        })
+            'bbox': bbox,
+            'width': width,
+            'height': height
+        }
+        
+        if class_name.lower() == 'fish':
+            fish_detections.append(detection)
+        elif class_name.lower() == 'scale':
+            scale_detections.append(detection)
     
-    # Format detection text
-    if detections_list:
-        det_text = f"**Found {len(detections_list)} detection(s):**\n\n"
-        for i, det in enumerate(detections_list, 1):
-            det_text += f"{i}. **{det['class']}** - Confidence: {det['confidence']:.1%}\n"
-    else:
-        det_text = "No detections found. Try adjusting the confidence threshold."
+    # Calculate fish lengths
+    if not scale_detections:
+        return plotted_img_rgb, "⚠️ **Error:** No scale detected in image. Cannot calculate fish lengths."
     
-    return plotted_img_rgb, det_text
+    if not fish_detections:
+        return plotted_img_rgb, "ℹ️ **No fish detected in the image.**"
+    
+    # Use the first scale detection for calibration
+    scale_bbox = scale_detections[0]
+    scale_pixels = scale_bbox['height']  # Using height of scale bounding box
+    pixels_per_cm = scale_pixels / scale_cm
+    
+    # Calculate fish lengths
+    fish_lengths = []
+    for fish in fish_detections:
+        # Use the height of the bounding box as fish length
+        length_pixels = fish['height']
+        length_cm = length_pixels / pixels_per_cm
+        fish_lengths.append(length_cm)
+    
+    # Sort lengths for better readability
+    fish_lengths.sort(reverse=True)
+    
+    # Calculate statistics
+    fish_count = len(fish_lengths)
+    min_length = min(fish_lengths)
+    max_length = max(fish_lengths)
+    avg_length = sum(fish_lengths) / fish_count
+    
+    # Format output text
+    output_text = f"""## 🐟 Analysis Results
+
+**🐠 FISH COUNT:** {fish_count}
+
+**📏 INDIVIDUAL LENGTHS (cm):**
+{', '.join([f'{length:.2f}' for length in fish_lengths])}
+
+---
+
+**📊 STATISTICS:**
+- **Minimum Length:** {min_length:.2f} cm
+- **Maximum Length:** {max_length:.2f} cm
+- **Average Length:** {avg_length:.2f} cm
+
+---
+
+**🔧 Detection Details:**
+- Scale length used: {scale_cm} cm
+- Scale detected: ✓ (confidence: {scale_detections[0]['confidence']:.1%})
+- Fish detected: {fish_count}
+- Confidence threshold: {conf_threshold:.0%}
+"""
+    
+    return plotted_img_rgb, output_text
 
 # Create Gradio interface
-with gr.Blocks(title="Fish & Scale Detector (RT-DETR)") as demo:
+with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) as demo:
     gr.Markdown(
         """
-        # 🐟 Fish & Scale Detector
+        # 🐟 Fish Length Analyzer
         ### Powered by RT-DETR
         
-        Upload an image to detect **fish** and **scales** with high accuracy!
+        Upload an image with fish and a scale reference to automatically measure fish lengths!
         
         **Model Performance:**
         - Scale Detection: 100% recall, 98.4% precision
@@ -80,7 +146,15 @@ with gr.Blocks(title="Fish & Scale Detector (RT-DETR)") as demo:
     
     with gr.Row():
         with gr.Column():
-            input_image = gr.Image(type="pil", label="Upload Image")
+            input_image = gr.Image(type="pil", label="📤 Upload Image")
+            
+            scale_input = gr.Number(
+                label="📏 Scale Length (cm)",
+                info="Enter the actual length of the scale object visible in the image",
+                value=10.0,
+                minimum=0.1,
+                maximum=100.0
+            )
             
             with gr.Accordion("⚙️ Advanced Settings", open=False):
                 conf_slider = gr.Slider(
@@ -100,37 +174,35 @@ with gr.Blocks(title="Fish & Scale Detector (RT-DETR)") as demo:
                     info="Higher = fewer overlapping boxes"
                 )
             
-            predict_btn = gr.Button("🔍 Detect", variant="primary", size="lg")
+            predict_btn = gr.Button("🔍 Analyze & Measure", variant="primary", size="lg")
         
         with gr.Column():
-            output_image = gr.Image(type="numpy", label="Detection Results")
-            output_text = gr.Markdown(label="Detections")
+            output_image = gr.Image(type="numpy", label="🎯 Detection Results")
+            output_text = gr.Markdown(label="📊 Analysis")
     
-    # Examples (optional - add some sample images if you have them)
-    gr.Examples(
-        examples=[
-            # Add paths to example images here if you want
-            # ["example1.jpg", 0.25, 0.45],
-        ],
-        inputs=[input_image, conf_slider, iou_slider],
+    gr.Markdown(
+        """
+        ---
+        ### 📋 How to Use:
+        1. **Upload an image** containing fish and a scale reference object
+        2. **Enter the scale length** (the actual length of your scale object in cm)
+        3. Click **"Analyze & Measure"**
+        4. View detected fish with their calculated lengths!
+        
+        ---
+        **Model Details:**
+        - Architecture: RT-DETR (Real-Time Detection Transformer)
+        - Classes: Fish, Scale
+        - Training: 150 epochs, 96.5% mAP50
+        - Framework: Ultralytics
+        """
     )
     
     # Connect the prediction function
     predict_btn.click(
         fn=predict_image,
-        inputs=[input_image, conf_slider, iou_slider],
+        inputs=[input_image, scale_input, conf_slider, iou_slider],
         outputs=[output_image, output_text]
-    )
-    
-    gr.Markdown(
-        """
-        ---
-        **Model Details:**
-        - Architecture: RT-DETR (Real-Time Detection Transformer)
-        - Classes: Fish, Scale
-        - Training: 150 epochs on 58 images
-        - Framework: Ultralytics
-        """
     )
 
 if __name__ == "__main__":
