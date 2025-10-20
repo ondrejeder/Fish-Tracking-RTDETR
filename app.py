@@ -81,8 +81,8 @@ def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
     # Calculate fish lengths using longer side of bounding box
     fish_lengths = []
     for fish in fish_detections:
-        # Use the LONGER side of bounding box as fish length
-        length_pixels = max(fish['width'], fish['height'])
+        # Use diagonal - most accurate for any fish orientation
+        length_pixels = np.sqrt(fish['width']**2 + fish['height']**2)
         length_cm = length_pixels / pixels_per_cm
         fish_lengths.append(length_cm)
     
