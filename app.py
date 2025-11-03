@@ -3,20 +3,22 @@ from ultralytics import RTDETR
 from PIL import Image
 import numpy as np
 import spaces
+import csv
+import io
 
 # Load your trained RT-DETR model
 model = RTDETR('best.pt')
 
 @spaces.GPU
-def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
+def predict_image(image, scale_cm, conf_threshold=0.5, iou_threshold=0.45):
     """
     Run RT-DETR inference on an image and calculate fish lengths
     """
     if image is None:
-        return None, "Please upload an image."
+        return None, "Please upload an image.", None
     
     if scale_cm is None or scale_cm <= 0:
-        return None, "Please enter a valid scale length in cm."
+        return None, "Please enter a valid scale length in cm.", None
     
     # Run prediction
     results = model.predict(
@@ -67,10 +69,10 @@ def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
     
     # Calculate fish lengths
     if not scale_detections:
-        return plotted_img_rgb, "⚠️ **Error:** No scale detected in image. Cannot calculate fish lengths."
+        return plotted_img_rgb, "⚠️ **Error:** No scale detected in image. Cannot calculate fish lengths.", None
     
     if not fish_detections:
-        return plotted_img_rgb, "ℹ️ **No fish detected in the image.**"
+        return plotted_img_rgb, "ℹ️ **No fish detected in the image.**", None
     
     # Use the LARGEST scale detection for calibration (most visible/reliable)
     if len(scale_detections) > 1:
@@ -84,7 +86,7 @@ def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
     scale_pixels = max(scale_bbox['height'], scale_bbox['width'])
     pixels_per_cm = scale_pixels / scale_cm
     
-    # Calculate fish lengths using longer side of bounding box
+    # Calculate fish lengths using diagonal
     fish_lengths = []
     for fish in fish_detections:
         # Use diagonal - most accurate for any fish orientation
@@ -101,10 +103,34 @@ def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
     max_length = max(fish_lengths)
     avg_length = sum(fish_lengths) / fish_count
     
+    # Create CSV content
+    csv_content = io.StringIO()
+    csv_writer = csv.writer(csv_content)
+    
+    # Write header
+    csv_writer.writerow(['Fish Number', 'Length (cm)'])
+    
+    # Write individual fish lengths
+    for i, length in enumerate(fish_lengths, 1):
+        csv_writer.writerow([i, f'{length:.2f}'])
+    
+    # Write summary statistics
+    csv_writer.writerow([])  # Empty row
+    csv_writer.writerow(['Summary Statistics', ''])
+    csv_writer.writerow(['Minimum Length (cm)', f'{min_length:.2f}'])
+    csv_writer.writerow(['Maximum Length (cm)', f'{max_length:.2f}'])
+    csv_writer.writerow(['Average Length (cm)', f'{avg_length:.2f}'])
+    csv_writer.writerow(['Total Fish Count', fish_count])
+    
+    # Get CSV string and create file
+    csv_string = csv_content.getvalue()
+    csv_content.close()
+    
     # Format output text
     output_text = f"""## 🐟 Analysis Results
 
 **🐠 FISH COUNT:** {fish_count}
+{multiple_scales_warning}
 
 **📏 INDIVIDUAL LENGTHS (cm):**
 {', '.join([f'{length:.2f}' for length in fish_lengths])}
@@ -120,13 +146,14 @@ def predict_image(image, scale_cm, conf_threshold=0.25, iou_threshold=0.45):
 
 **🔧 Detection Details:**
 - Scale length used: {scale_cm} cm
-- Scale detected: ✓ (confidence: {scale_detections[0]['confidence']:.1%})
+- Scales detected: {len(scale_detections)} (using largest)
+- Scale confidence: {scale_bbox['confidence']:.1%}
 - Fish detected: {fish_count}
-- Measurement method: Longer bounding box side
+- Measurement method: Diagonal (handles any angle)
 - Confidence threshold: {conf_threshold:.0%}
 """
     
-    return plotted_img_rgb, output_text
+    return plotted_img_rgb, output_text, csv_string
 
 # Create Gradio interface
 with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) as demo:
@@ -150,7 +177,7 @@ with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) a
             scale_input = gr.Number(
                 label="📏 Scale Length (cm)",
                 info="Enter the actual length of the scale object visible in the image",
-                value=10.0,
+                value=40.0,  # Changed default to 40
                 minimum=0.1,
                 maximum=100.0
             )
@@ -159,7 +186,7 @@ with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) a
                 conf_slider = gr.Slider(
                     minimum=0.1,
                     maximum=0.9,
-                    value=0.25,
+                    value=0.5,  # Changed default to 0.5
                     step=0.05,
                     label="Confidence Threshold",
                     info="Lower = more detections (but more false positives)"
@@ -178,6 +205,9 @@ with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) a
         with gr.Column():
             output_image = gr.Image(type="numpy", label="🎯 Detection Results")
             output_text = gr.Markdown(label="📊 Analysis")
+            
+            # Add CSV download button
+            csv_output = gr.File(label="📥 Download Results (CSV)", visible=True)
     
     gr.Markdown(
         """
@@ -187,6 +217,7 @@ with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) a
         2. **Enter the scale length** (the actual length of your scale object in cm)
         3. Click **"Analyze & Measure"**
         4. View detected fish with their calculated lengths!
+        5. **Download CSV** with all measurements and statistics
         
         ---
         **Model Details:**
@@ -198,10 +229,22 @@ with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) a
     )
     
     # Connect the prediction function
+    def process_and_save_csv(image, scale_cm, conf_threshold, iou_threshold):
+        img, text, csv_content = predict_image(image, scale_cm, conf_threshold, iou_threshold)
+        
+        # Save CSV to temporary file if content exists
+        if csv_content:
+            csv_file = "fish_measurements.csv"
+            with open(csv_file, 'w', newline='') as f:
+                f.write(csv_content)
+            return img, text, csv_file
+        else:
+            return img, text, None
+    
     predict_btn.click(
-        fn=predict_image,
+        fn=process_and_save_csv,
         inputs=[input_image, scale_input, conf_slider, iou_slider],
-        outputs=[output_image, output_text]
+        outputs=[output_image, output_text, csv_output]
     )
 
 if __name__ == "__main__":
