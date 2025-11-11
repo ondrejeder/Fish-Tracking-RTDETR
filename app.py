@@ -163,10 +163,6 @@ with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) a
         ### Powered by RT-DETR
         
         Upload an image with fish and a scale reference to automatically measure fish lengths!
-        
-        **Model Performance:**
-        - Scale Detection: 100% recall, 98.4% precision
-        - Overall mAP50: 96.5%
         """
     )
     
@@ -220,11 +216,6 @@ with gr.Blocks(title="Fish Length Analyzer (RT-DETR)", theme=gr.themes.Soft()) a
         5. **Download CSV** with all measurements and statistics
         
         ---
-        **Model Details:**
-        - Architecture: RT-DETR (Real-Time Detection Transformer)
-        - Classes: Fish, Scale
-        - Training: 150 epochs, 96.5% mAP50
-        - Framework: Ultralytics
         """
     )
     
