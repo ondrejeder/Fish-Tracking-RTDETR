@@ -1,5 +1,5 @@
 ---
-title: Fish Tracking
+title: Fish Tracking RT-DETR
 emoji: 🌍
 colorFrom: pink
 colorTo: gray
